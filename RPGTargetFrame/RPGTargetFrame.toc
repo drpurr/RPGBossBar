@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: RPG Target Frame
+## Notes: Replaces the target frame with an RPG Boss Bar style unit frame.
+## Version: 1.60.1-1
+## IconTexture: Interface\AddOns\RPGTargetFrame\icon.tga
+## SavedVariables: RPGTargetFrameDB
+
+Defaults.lua
+Art.lua
+Bar.lua
+Auras.lua
+CastBar.lua
+HideBlizzard.lua
+Commands.lua
+RPGTargetFrame.lua
