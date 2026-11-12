@@ -254,7 +254,19 @@ local function ShowModernBorder(frame, style, borderSize, r, g, b, a)
 
     if not style.topAtlas then
         local layout = RPGBB:GetNineSliceStyleLayout(style)
+
+        -- Some named layouts don't exist on every client (e.g. WoW Forever).
+        if not layout then
+            RPGBB:VPrint("Border layout unavailable on this client: " .. tostring(style.layoutName))
+            return false
+        end
+
         NineSliceUtil.ApplyLayout(frame, layout, style.textureKit)
+
+        if not frame.TopEdge or not frame.BottomEdge then
+            HideNineSliceBorder(frame)
+            return false
+        end
 
         for _, pieceName in ipairs(NINE_SLICE_PIECES) do
             if frame[pieceName] then
@@ -409,6 +421,42 @@ local function UpdateFrameBackground(frame)
     frame.bg:ClearAllPoints()
     frame.bg:SetAllPoints(frame)
     frame.bg:SetColorTexture(RPGBB.db:GetColor("frame", "background_color"))
+end
+
+local function MergeDefaults(defaults, overrides)
+    local merged = {}
+
+    for key, value in pairs(defaults) do
+        merged[key] = value
+    end
+
+    for key, value in pairs(overrides) do
+        if type(value) == "table" and type(merged[key]) == "table" then
+            merged[key] = MergeDefaults(merged[key], value)
+        else
+            merged[key] = value
+        end
+    end
+
+    return merged
+end
+
+-- db:Get returns the profile's raw table as soon as it stores any subkey, so a
+-- profile that only changed an accent's color would lose `selected`, `scale`,
+-- etc. Merge the slot over its defaults to always get a complete config.
+local function GetAccentConfig(slot)
+    local defaults = RPGBB.db:GetDefault("accents", slot)
+    local raw = RPGBB.db:GetRaw("accents", slot)
+
+    if type(defaults) ~= "table" then
+        return type(raw) == "table" and raw or {}
+    end
+
+    if type(raw) ~= "table" then
+        return defaults
+    end
+
+    return MergeDefaults(defaults, raw)
 end
 
 local function GetAccentColor(slot)
@@ -571,6 +619,17 @@ end
 --- Frame Lifecycle
 -------------------------------------------------------------------------------
 
+-- Reuse font objects across updates and fall back to the default game font if
+-- the configured file can't be loaded (e.g. an LSM font from a removed addon);
+-- a font object with no font errors with "Font not set" on SetText.
+local function SetFontSafe(font_object, path, size, outline)
+    local ok = pcall(font_object.SetFont, font_object, path, size, outline)
+
+    if not ok or not font_object:GetFont() then
+        font_object:SetFont(STANDARD_TEXT_FONT, size, outline)
+    end
+end
+
 function RPGBB:InitOrUpdateFrame()
     RPGBB:VPrint("InitOrUpdateFrame fired")
     UpdateTrackingEvents()
@@ -597,8 +656,8 @@ function RPGBB:InitOrUpdateFrame()
     --- Accent Groups
     ---------------------------------------------------------------------------
 
-    local left_accent = RPGBB.db:Get("accents", "left")
-    local right_accent = RPGBB.db:Get("accents", "right")
+    local left_accent = GetAccentConfig("left")
+    local right_accent = GetAccentConfig("right")
     local accent_context = {
         parent = RPGBB.frame,
         anchor = RPGBB.frame,
@@ -639,14 +698,14 @@ function RPGBB:InitOrUpdateFrame()
     local health_font_r, health_font_g, health_font_b, health_font_a =
         RPGBB.db:GetColor("health", "font", "color")
 
-    RPGBB.health_font = CreateFont("RPGBossBarHealthFont")
-    RPGBB.health_font:SetFont(health_font, health_font_size, health_font_outline)
+    RPGBB.health_font = RPGBB.health_font or CreateFont("RPGBossBarHealthFont")
+    SetFontSafe(RPGBB.health_font, health_font, health_font_size, health_font_outline)
     RPGBB.health_font:SetTextColor(health_font_r, health_font_g, health_font_b, health_font_a)
 
     local health_percent_font_outline = RPGBB.db:Get("health", "percent_font", "outline") or ""
 
-    RPGBB.health_percent_font = CreateFont("RPGBossBarHealthPercentFont")
-    RPGBB.health_percent_font:SetFont(health_font, health_font_size, health_percent_font_outline)
+    RPGBB.health_percent_font = RPGBB.health_percent_font or CreateFont("RPGBossBarHealthPercentFont")
+    SetFontSafe(RPGBB.health_percent_font, health_font, health_font_size, health_percent_font_outline)
     RPGBB.health_percent_font:SetTextColor(health_font_r, health_font_g, health_font_b, health_font_a)
 
 
@@ -654,8 +713,8 @@ function RPGBB:InitOrUpdateFrame()
     local name_font_size = RPGBB.db:Get("name", "font", "size")
     local name_font_outline = RPGBB.db:Get("name", "font", "outline") or ""
 
-    RPGBB.name_font = CreateFont("RPGBossBarNameFont")
-    RPGBB.name_font:SetFont(name_font, name_font_size, name_font_outline)
+    RPGBB.name_font = RPGBB.name_font or CreateFont("RPGBossBarNameFont")
+    SetFontSafe(RPGBB.name_font, name_font, name_font_size, name_font_outline)
     RPGBB.name_font:SetTextColor(RPGBB.db:GetColor("name", "font", "color"))
 
 
@@ -663,8 +722,8 @@ function RPGBB:InitOrUpdateFrame()
     local power_font_size = RPGBB.db:Get("power", "font", "size")
     local power_font_outline = RPGBB.db:Get("power", "font", "outline") or ""
 
-    RPGBB.power_font = CreateFont("RPGBossBarPowerFont")
-    RPGBB.power_font:SetFont(power_font, power_font_size, power_font_outline)
+    RPGBB.power_font = RPGBB.power_font or CreateFont("RPGBossBarPowerFont")
+    SetFontSafe(RPGBB.power_font, power_font, power_font_size, power_font_outline)
     RPGBB.power_font:SetTextColor(RPGBB.db:GetColor("power", "font", "color"))
 
     --- Update Frames after changing Init Frame settings
@@ -794,12 +853,50 @@ function RPGBB:BossFrameHasPower(boss_frame)
     return type(max_power) == "number" and max_power > 0
 end
 
+-- UnitHealthPercent/UnitPowerPercent and CurveConstants exist on Retail 12.x
+-- (where raw values may be secret and can't be used in arithmetic). Older
+-- clients such as WoW Forever fall back to computing the percentage directly.
+local function GetScaleTo100()
+    return CurveConstants and CurveConstants.ScaleTo100
+end
+
+local function GetUnitHealthPercent(unit, health, max_health)
+    local scale = GetScaleTo100()
+
+    if UnitHealthPercent and scale then
+        return UnitHealthPercent(unit, true, scale) or 0
+    end
+
+    if type(health) == "number" and type(max_health) == "number" and max_health > 0 then
+        return health / max_health * 100
+    end
+
+    return 0
+end
+
+local function GetUnitPowerPercent(unit)
+    local scale = GetScaleTo100()
+
+    if UnitPowerPercent and scale then
+        return UnitPowerPercent(unit, nil, false, scale) or 0
+    end
+
+    local power = UnitPower(unit)
+    local max_power = UnitPowerMax(unit)
+
+    if type(power) == "number" and type(max_power) == "number" and max_power > 0 then
+        return power / max_power * 100
+    end
+
+    return 0
+end
+
 function RPGBB:RenderHealthChanges(boss_frame, abs_health, max_health, per_health)
     local health_bar = RPGBB.health_bars[boss_frame]
 
     local abs_health = abs_health or UnitHealth(boss_frame)
     local max_health = max_health or UnitHealthMax(boss_frame)
-    local per_health = per_health or UnitHealthPercent(boss_frame, true, CurveConstants.ScaleTo100) or 0
+    local per_health = per_health or GetUnitHealthPercent(boss_frame, abs_health, max_health)
 
     if health_bar and health_bar.frame then
         -- Render frame values
@@ -842,12 +939,7 @@ function RPGBB:RenderPowerChanges(boss_frame, power_percent)
         return
     end
 
-    local per_power = power_percent or UnitPowerPercent(
-        boss_frame,
-        nil,
-        false,
-        CurveConstants.ScaleTo100
-    ) or 0
+    local per_power = power_percent or GetUnitPowerPercent(boss_frame)
 
     health_bar.power_bar:SetMinMaxValues(0, 100)
     health_bar.power_bar:SetValue(per_power)
@@ -991,7 +1083,7 @@ function RPGBB:UpdateFrames()
     local power_text_x              = RPGBB.db:Get("power", "font", "position", "x")
     local power_text_y              = RPGBB.db:Get("power", "font", "position", "y")
 
-    local center_accent = RPGBB.db:Get("accents", "center")
+    local center_accent = GetAccentConfig("center")
     local center_accent_color = GetAccentColor("center")
     local center_accent_offset_x = RPGBB.db:Get("accents", "center", "offset", "x")
     local center_accent_offset_y = RPGBB.db:Get("accents", "center", "offset", "y")
@@ -1370,7 +1462,8 @@ local function EventHandler(self, event, arg1)
     elseif event == "PLAYER_REGEN_ENABLED" then
         if RPGBB:IsTrackingTarget() then
             RPGBB:UpdateFrames()
-        else
+        elseif not testing then
+            -- Keep test/Edit Mode previews visible after combat ends.
             RPGBB.frame:Hide()
         end
     elseif event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" or event == "UNIT_FLAGS" then

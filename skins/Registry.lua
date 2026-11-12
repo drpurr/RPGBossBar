@@ -185,6 +185,61 @@ local function ValidateTable(path, default_value, value, errors)
     end
 end
 
+-- Copy only values that pass the same checks as skin overrides. Unknown keys
+-- and invalid values are dropped (so defaults apply) instead of failing the
+-- whole import, which keeps older exports usable.
+local function SanitizeTable(path, default_value, value, dropped)
+    local clean = {}
+
+    for key, child_value in pairs(value) do
+        local child_path = PathWithKey(path, tostring(key))
+        local default_child = nil
+
+        -- Not `and/or`: many defaults are `false`.
+        if type(key) == "string" then
+            default_child = default_value[key]
+        end
+
+        if default_child == nil then
+            dropped[#dropped + 1] = PathToString(child_path) .. ": not a known setting"
+        elseif type(default_child) == "table" and not IsDefaultColor(default_child) then
+            if type(child_value) == "table" then
+                clean[key] = SanitizeTable(child_path, default_child, child_value, dropped)
+            else
+                dropped[#dropped + 1] = PathToString(child_path) .. ": must be a table"
+            end
+        else
+            local errors = {}
+
+            if IsDefaultColor(default_child) then
+                ValidateColor(child_path, child_value, errors)
+            else
+                ValidateScalar(child_path, default_child, child_value, errors)
+            end
+
+            if #errors == 0 then
+                clean[key] = type(child_value) == "table" and CopyTable(child_value) or child_value
+            else
+                for _, message in ipairs(errors) do
+                    dropped[#dropped + 1] = message
+                end
+            end
+        end
+    end
+
+    return clean
+end
+
+function RPGBB:SanitizeProfileData(data)
+    local dropped = {}
+
+    if type(data) ~= "table" then
+        return {}, { "profile data must be a table" }
+    end
+
+    return SanitizeTable({}, RPGBB.db_defaults, data, dropped), dropped
+end
+
 local function ValidateMergedSkinProfile(profile, errors)
     if profile.health.texture.atlas and type(profile.health.texture.atlas_texture) ~= "string" then
         AddValidationError(errors, { "health", "texture", "atlas_texture" }, "must be a string when atlas textures are enabled")

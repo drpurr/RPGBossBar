@@ -225,9 +225,11 @@ StaticPopupDialogs["RPGBB_COPY_PROFILE"] = {
 
 StaticPopupDialogs["RPGBB_APPLY_DEFAULT_SKIN"] = {
     text = "Apply profile skin \"%s\" to active profile \"%s\"?\n\nApply overlays only the skin settings and keeps unrelated profile settings such as frame position.\n\nReset and Apply resets the profile to defaults first, then applies the selected skin.",
+    -- Keep Cancel on button2 (OnCancel) because Escape also fires OnCancel;
+    -- the destructive "Reset and Apply" lives on button3 (OnAlt).
     button1 = "Apply",
-    button2 = "Reset and Apply",
-    button3 = "Cancel",
+    button2 = "Cancel",
+    button3 = "Reset and Apply",
     OnAccept = function(self, data)
         local skinID = data
         local refreshProfileSettings = false
@@ -239,11 +241,9 @@ StaticPopupDialogs["RPGBB_APPLY_DEFAULT_SKIN"] = {
 
         ApplyDefaultSkinToCurrentProfile(skinID, refreshProfileSettings)
     end,
-    OnCancel = function(self, data, reason)
-        if reason ~= "clicked" then
-            return
-        end
-
+    OnCancel = function()
+    end,
+    OnAlt = function(self, data)
         local skinID = data
         local refreshProfileSettings = false
 
@@ -253,8 +253,6 @@ StaticPopupDialogs["RPGBB_APPLY_DEFAULT_SKIN"] = {
         end
 
         ResetAndApplyDefaultSkinToCurrentProfile(skinID, refreshProfileSettings)
-    end,
-    OnAlt = function()
     end,
     timeout = 0,
     whileDead = true,
@@ -409,8 +407,77 @@ end
 --- Import
 -------------------------------------------------------------------------------
 
+-- Exports only contain table/string/number/boolean literals. Reject anything
+-- with control flow or function syntax so a pasted loop can't freeze the client.
+local disallowed_import_keywords = {
+    ["do"] = true,
+    ["end"] = true,
+    ["for"] = true,
+    ["function"] = true,
+    ["goto"] = true,
+    ["repeat"] = true,
+    ["until"] = true,
+    ["while"] = true,
+}
+
+local function stripStringLiterals(str)
+    local out = {}
+    local i = 1
+    local len = #str
+
+    while i <= len do
+        local char = str:sub(i, i)
+
+        if char == '"' or char == "'" then
+            local quote = char
+            i = i + 1
+
+            while i <= len do
+                local inner = str:sub(i, i)
+
+                if inner == "\\" then
+                    i = i + 2
+                elseif inner == quote then
+                    break
+                else
+                    i = i + 1
+                end
+            end
+
+            out[#out + 1] = '""'
+        else
+            out[#out + 1] = char
+        end
+
+        i = i + 1
+    end
+
+    return table.concat(out)
+end
+
+local function containsCode(str)
+    -- Drop string literals first so setting values can contain any text.
+    local stripped = stripStringLiterals(str)
+
+    if stripped:find("%[=*%[") or stripped:find("%-%-") then
+        return true
+    end
+
+    for word in stripped:gmatch("[%a_][%w_]*") do
+        if disallowed_import_keywords[word] then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function deserialize(str)
     if type(str) ~= "string" or str:trim() == "" then
+        return nil
+    end
+
+    if containsCode(str) then
         return nil
     end
 
@@ -441,10 +508,15 @@ local function showImport()
                 return
             end
 
+            local clean, dropped = RPGBB:SanitizeProfileData(data)
+            for _, message in ipairs(dropped) do
+                RPGBB:Print("Import skipped " .. message)
+            end
+
             local activeKey = RPGBB.GetActiveProfileKey()
             local dest = RPGBossBarProfiles.profiles[activeKey]
             wipe(dest)
-            for k, v in pairs(data) do
+            for k, v in pairs(clean) do
                 dest[k] = v
             end
             RPGBossBarProfiles.profileMeta[activeKey] = nil
@@ -468,6 +540,11 @@ end
 -------------------------------------------------------------------------------
 
 function RPGBB.RefreshGeneralSettings()
+    -- InitOrUpdateFrame runs on ADDON_LOADED before these settings exist.
+    if not RPGBB.generalSettingsRegistered then
+        return
+    end
+
     Settings.NotifyUpdate("RPGBB_TEST_FRAMES")
     Settings.NotifyUpdate("RPGBB_TRACK_TARGET")
     Settings.NotifyUpdate("RPGBB_MAX_FRAMES")
@@ -772,6 +849,7 @@ function RPGBB.RegisterProfileSettings()
 
     Settings.RegisterAddOnCategory(category)
     RPGBB.settingsCategory = category
+    RPGBB.generalSettingsRegistered = true
 end
 
 function RPGBB.RefreshProfileSettings()

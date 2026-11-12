@@ -253,7 +253,9 @@ local function test_frame_count_set(layoutName, value, fromReset)
         frame_count = math.max(1, math.min(5, math.floor(value)))
     end
 
-    if frame_count ~= RPGBB:GetTestFrameCount() then
+    -- Start a preview even when the stored count already matches; only skip
+    -- when the same count is already being previewed.
+    if not RPGBB:IsTesting() or frame_count ~= RPGBB:GetTestFrameCount() then
         RPGBB:ToggleTest(frame_count)
     end
 end
@@ -2666,34 +2668,45 @@ LEM:AddFrameSettingsButtons(RPGBB.frame, {
 
 -- Keep the selection frame interactive while hiding its tint, border, and label
 -- when RPG Boss Bar is selected.
+-- LibEditMode keeps the selection frame in LEM.frameSelections; the Blizzard
+-- template may or may not also expose it as frame.Selection.
+local editModeSelection = RPGBB.frame.Selection
+    or (LEM.frameSelections and LEM.frameSelections[RPGBB.frame])
+
 local function SetEditModeSelectionState(alpha, isLabelVisible)
-  RPGBB.frame.Selection:SetAlpha(alpha)
-  if isLabelVisible then
-    RPGBB.frame.Selection.Label:Show()
-  else
-    RPGBB.frame.Selection.Label:Hide()
+  if not editModeSelection then
+    return
+  end
+
+  editModeSelection:SetAlpha(alpha)
+  if editModeSelection.Label then
+    editModeSelection.Label:SetShown(isLabelVisible and true or false)
   end
 end
 
-RPGBB.frame.Selection:HookScript('OnMouseDown', function(self)
-  if self.isSelected then
-    SetEditModeSelectionState(0, false)
-  end
-end)
+if editModeSelection then
+  editModeSelection:HookScript('OnMouseDown', function(self)
+    if self.isSelected then
+      SetEditModeSelectionState(0, false)
+    end
+  end)
 
-RPGBB.frame.Selection:HookScript('OnLeave', function(self)
-  if self.isSelected then
-    SetEditModeSelectionState(0, false)
-  else
-    SetEditModeSelectionState(1, false)
-  end
-end)
+  editModeSelection:HookScript('OnLeave', function(self)
+    if self.isSelected then
+      SetEditModeSelectionState(0, false)
+    else
+      SetEditModeSelectionState(1, false)
+    end
+  end)
+end
 
-LEM.internal.dialog:HookScript('OnHide', function(self)
-  if not RPGBB.frame.Selection.isSelected then
-    SetEditModeSelectionState(1, false)
-  end
-end)
+if LEM.internal and LEM.internal.dialog then
+  LEM.internal.dialog:HookScript('OnHide', function(self)
+    if editModeSelection and not editModeSelection.isSelected then
+      SetEditModeSelectionState(1, false)
+    end
+  end)
+end
 
 -------------------------------------------------------------------------------
 --- Vertical Layout warning dialog
