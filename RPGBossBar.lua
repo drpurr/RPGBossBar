@@ -749,11 +749,10 @@ end
 function RPGBB:Lock(locked)
     RPGBB:VPrint("Lock: " .. (locked and "true" or "false"))
     if locked then
-        RPGBB.frame:Hide()
-
+        -- Leaving Edit Mode: drop the preview, but keep showing live bosses.
         if testing then
             RPGBB:ToggleTest()
-        elseif RPGBB:IsTrackingTarget() then
+        else
             RPGBB:UpdateFrames()
         end
     else -- unlocked
@@ -1460,12 +1459,10 @@ local function EventHandler(self, event, arg1)
             end
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
-        if RPGBB:IsTrackingTarget() then
-            RPGBB:UpdateFrames()
-        elseif not testing then
-            -- Keep test/Edit Mode previews visible after combat ends.
-            RPGBB.frame:Hide()
-        end
+        -- Recompute visibility from the tracked units instead of hiding:
+        -- living bosses, test previews and targets stay shown after combat,
+        -- and the bar still hides once no tracked unit remains.
+        RPGBB:UpdateFrames()
     elseif event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" or event == "UNIT_FLAGS" then
         if RPGBB:IsBossFramesToUpdate() then
             RPGBB:UpdateHealth()
